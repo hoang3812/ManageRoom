@@ -1,0 +1,404 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  STAFF
+  TENANT
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+  INACTIVE
+}
+
+enum ContractStatus {
+  ACTIVE
+  EXPIRED
+  TERMINATED
+  PENDING
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  VNPAY
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum MaintenanceStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum MaintenancePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationType {
+  INVOICE
+  CONTRACT
+  PAYMENT
+  MAINTENANCE
+  ANNOUNCEMENT
+  SYSTEM
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  fullName         String
+  phone            String?
+  avatar           String?
+  role             UserRole  @default(TENANT)
+  isActive         Boolean   @default(true)
+  isEmailVerified  Boolean   @default(false)
+  emailVerifyToken String?
+  resetPasswordToken String?
+  resetPasswordExpires DateTime?
+  fcmTokens        String[]  @default([])
+  refreshTokens    String[]  @default([])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  ownedProperties  Property[]           @relation("PropertyOwner")
+  managedProperties Property[]          @relation("PropertyStaff")
+  tenant           Tenant?
+  sentMessages     Message[]            @relation("MessageSender")
+  notifications    Notification[]
+  conversations    ConversationParticipant[]
+  maintenanceRequests MaintenanceRequest[] @relation("MaintenanceRequester")
+  assignedMaintenance MaintenanceRequest[] @relation("MaintenanceAssignee")
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+model Property {
+  id          String   @id @default(cuid())
+  name        String
+  address     String
+  ward        String?
+  district    String?
+  province    String
+  description String?
+  images      String[] @default([])
+  isActive    Boolean  @default(true)
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User     @relation("PropertyOwner", fields: [ownerId], references: [id])
+  staff       User[]   @relation("PropertyStaff")
+  rooms       Room[]
+  serviceFees ServiceFee[]
+
+  @@map("properties")
+}
+
+model RoomType {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  rooms       Room[]
+
+  @@map("room_types")
+}
+
+model Room {
+  id             String     @id @default(cuid())
+  roomNumber     String
+  floor          Int?
+  area           Float?
+  maxOccupants   Int        @default(2)
+  basePrice      Float
+  deposit        Float      @default(0)
+  description    String?
+  images         String[]   @default([])
+  status         RoomStatus @default(AVAILABLE)
+  propertyId     String
+  roomTypeId     String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  property        Property         @relation(fields: [propertyId], references: [id])
+  roomType        RoomType?        @relation(fields: [roomTypeId], references: [id])
+  contracts       Contract[]
+  utilityReadings UtilityReading[]
+  maintenanceRequests MaintenanceRequest[]
+
+  @@unique([propertyId, roomNumber])
+  @@map("rooms")
+}
+
+model Tenant {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  idCardNumber String?
+  idCardFront  String?
+  idCardBack   String?
+  birthDate    DateTime?
+  permanentAddress String?
+  occupation   String?
+  emergencyContact String?
+  emergencyPhone   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User       @relation(fields: [userId], references: [id])
+  contracts    Contract[]
+
+  @@map("tenants")
+}
+
+model ServiceFee {
+  id          String  @id @default(cuid())
+  name        String
+  amount      Float
+  unit        String?
+  propertyId  String
+  isActive    Boolean @default(true)
+
+  property    Property @relation(fields: [propertyId], references: [id])
+  invoiceItems InvoiceItem[]
+
+  @@map("service_fees")
+}
+
+model Contract {
+  id           String         @id @default(cuid())
+  contractCode String         @unique
+  roomId       String
+  tenantId     String
+  startDate    DateTime
+  endDate      DateTime
+  monthlyRent  Float
+  deposit      Float
+  depositPaid  Boolean        @default(false)
+  terms        String?
+  fileUrl      String?
+  status       ContractStatus @default(PENDING)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  room         Room       @relation(fields: [roomId], references: [id])
+  tenant       Tenant     @relation(fields: [tenantId], references: [id])
+  invoices     Invoice[]
+
+  @@map("contracts")
+}
+
+model UtilityReading {
+  id           String   @id @default(cuid())
+  roomId       String
+  month        Int
+  year         Int
+  electricPrev Float    @default(0)
+  electricCurr Float    @default(0)
+  electricRate Float    @default(3500)
+  waterPrev    Float    @default(0)
+  waterCurr    Float    @default(0)
+  waterRate    Float    @default(15000)
+  recordedAt   DateTime @default(now())
+  recordedBy   String?
+  invoiceId    String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  room         Room     @relation(fields: [roomId], references: [id])
+  invoice      Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@unique([roomId, month, year])
+  @@map("utility_readings")
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceCode   String        @unique
+  contractId    String
+  month         Int
+  year          Int
+  dueDate       DateTime
+  totalAmount   Float
+  paidAmount    Float         @default(0)
+  status        InvoiceStatus @default(DRAFT)
+  notes         String?
+  pdfUrl        String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  contract      Contract       @relation(fields: [contractId], references: [id])
+  items         InvoiceItem[]
+  payments      Payment[]
+  utilityReading UtilityReading?
+
+  @@unique([contractId, month, year])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id           String  @id @default(cuid())
+  invoiceId    String
+  description  String
+  quantity     Float   @default(1)
+  unitPrice    Float
+  amount       Float
+  serviceFeeId String?
+
+  invoice      Invoice     @relation(fields: [invoiceId], references: [id])
+  serviceFee   ServiceFee? @relation(fields: [serviceFeeId], references: [id])
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  paymentCode     String        @unique
+  invoiceId       String
+  amount          Float
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+  transactionId   String?
+  vnpayData       Json?
+  paidAt          DateTime?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  invoice         Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("payments")
+}
+
+model MaintenanceRequest {
+  id           String              @id @default(cuid())
+  requestCode  String              @unique
+  roomId       String
+  requesterId  String
+  assigneeId   String?
+  title        String
+  description  String
+  images       String[]            @default([])
+  priority     MaintenancePriority @default(MEDIUM)
+  status       MaintenanceStatus   @default(PENDING)
+  scheduledAt  DateTime?
+  completedAt  DateTime?
+  cost         Float?
+  notes        String?
+  rating       Int?
+  feedback     String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  room         Room  @relation(fields: [roomId], references: [id])
+  requester    User  @relation("MaintenanceRequester", fields: [requesterId], references: [id])
+  assignee     User? @relation("MaintenanceAssignee", fields: [assigneeId], references: [id])
+
+  @@map("maintenance_requests")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  type      NotificationType
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user      User @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model Conversation {
+  id           String   @id @default(cuid())
+  title        String?
+  lastMessage  String?
+  lastMessageAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String
+  fileUrl        String?
+  fileType       String?
+  isRead         Boolean  @default(false)
+  readAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@map("messages")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user       User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
